@@ -1339,7 +1339,6 @@ export default function SDUYDashboard() {
               <div className="space-y-3">
                 <div className="text-[10px]">
                   <p className="text-slate-400 uppercase font-black tracking-tighter mb-1">Project Investigator</p>
-                  <p className="font-medium">Director, NIELIT Bhubaneswar</p>
                 </div>
                 <div className="text-[10px]">
                   <p className="text-slate-400 uppercase font-black tracking-tighter mb-1">Project Co-PI</p>

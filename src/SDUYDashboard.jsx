@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { STATES_DATA } from './stateData.js';
+import { supabase } from './supabaseClient';
 
 const COLORS = {
   odisha: '#059669',
@@ -125,6 +126,10 @@ export default function SDUYDashboard() {
   const [activeTab, setActiveTab] = useState('overview');
   const [selectedState, setSelectedState] = useState('Odisha');
   const [data, setData] = useState(initialData);
+  const [user, setUser] = useState(null); // { role, state, name }
+  const [authLoading, setAuthLoading] = useState(true);
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+
   const [monthlyInput, setMonthlyInput] = useState({
     state: '',
     month: new Date().toISOString().slice(0, 7),
@@ -138,6 +143,71 @@ export default function SDUYDashboard() {
     remarks: ''
   });
   const [submissions, setSubmissions] = useState([]);
+  const [studentFile, setStudentFile] = useState(null);
+  const [approvalDoc, setApprovalDoc] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
+
+  useEffect(() => {
+    const fetchSubmissions = async () => {
+      const { data: subs, error } = await supabase
+        .from('submissions')
+        .select('*')
+        .order('submittedAt', { ascending: false });
+      
+      if (!error && subs) {
+        setSubmissions(subs);
+      }
+    };
+
+    if (user) {
+      fetchSubmissions();
+    }
+  }, [user]);
+
+  useEffect(() => {
+    // Check for existing session in localStorage
+    const savedUser = localStorage.getItem('sduy_user');
+    if (savedUser) {
+      setUser(JSON.parse(savedUser));
+    }
+    setAuthLoading(false);
+  }, []);
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    const { username, password } = loginForm;
+
+    // Define the 6 roles and simple pass logic for now
+    // In a production app, we would use supabase.auth.signInWithPassword
+    const roles = {
+      'admin': { role: 'SuperAdmin', name: 'Super Admin', pass: 'admin123' },
+      'pi': { role: 'PI', name: 'Project Investigator', pass: 'pi123' },
+      'odisha_copi': { role: 'Co-PI', state: 'Odisha', name: 'Co-PI Odisha', pass: 'odisha123' },
+      'wb_copi': { role: 'Co-PI', state: 'West Bengal', name: 'Co-PI West Bengal', pass: 'wb123' },
+      'bihar_copi': { role: 'Co-PI', state: 'Bihar', name: 'Co-PI Bihar', pass: 'bihar123' },
+      'jharkhand_copi': { role: 'Co-PI', state: 'Jharkhand', name: 'Co-PI Jharkhand', pass: 'jharkhand123' }
+    };
+
+    const userData = roles[username.toLowerCase()];
+    if (userData && userData.pass === password) {
+      const sessionUser = { role: userData.role, state: userData.state || null, name: userData.name };
+      setUser(sessionUser);
+      localStorage.setItem('sduy_user', JSON.stringify(sessionUser));
+      
+      // If State Co-PI, pre-select their state
+      if (userData.state) {
+        setMonthlyInput(prev => ({ ...prev, state: userData.state }));
+      }
+    } else {
+      alert('Invalid credentials. Please try again.');
+    }
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem('sduy_user');
+    setActiveTab('overview');
+  };
 
   const MetricCard = ({ label, value, subtext, trend }) => (
     <div className="bg-gradient-to-br from-slate-50 to-white rounded-xl p-5 border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
@@ -180,30 +250,74 @@ export default function SDUYDashboard() {
     utilization: Math.round((vals.utilized / vals.allocated) * 100)
   }));
 
-  const handleSubmitMonthlyData = () => {
+  const handleSubmitMonthlyData = async () => {
     if (!monthlyInput.state) {
       alert('Please select a state');
       return;
     }
-    const newSubmission = {
-      ...monthlyInput,
-      submittedAt: new Date().toISOString(),
-      id: Date.now()
-    };
-    setSubmissions([...submissions, newSubmission]);
-    alert('Monthly data submitted successfully!');
-    setMonthlyInput({
-      state: '',
-      month: new Date().toISOString().slice(0, 7),
-      districts: {},
-      scCount: 0,
-      stCount: 0,
-      ewsCount: 0,
-      womenCount: 0,
-      fundReceived: 0,
-      fundUtilized: 0,
-      remarks: ''
-    });
+    
+    if (!studentFile || !approvalDoc) {
+      alert('Please upload both the Student List (XLSX) and the Batch Approval copy (DOCX)');
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      // 1. Upload Student XLSX
+      const studentPath = `students/${Date.now()}_${studentFile.name}`;
+      const { error: studentError } = await supabase.storage
+        .from('documents')
+        .upload(studentPath, studentFile);
+      if (studentError) throw studentError;
+
+      // 2. Upload Approval DOCX
+      const docPath = `approvals/${Date.now()}_${approvalDoc.name}`;
+      const { error: docError } = await supabase.storage
+        .from('documents')
+        .upload(docPath, approvalDoc);
+      if (docError) throw docError;
+
+      // 3. Insert into Database
+      const { data: newSub, error: dbError } = await supabase
+        .from('submissions')
+        .insert([{
+          ...monthlyInput,
+          submittedAt: new Date().toISOString(),
+          studentFileName: studentFile.name,
+          approvalDocName: approvalDoc.name,
+          studentFileUrl: studentPath,
+          approvalDocUrl: docPath,
+          status: 'Pending Verification',
+          submittedBy: user.name
+        }])
+        .select();
+
+      if (dbError) throw dbError;
+
+      setSubmissions([newSub[0], ...submissions]);
+      alert('Monthly data and documents submitted successfully and synced to Supabase!');
+      
+      // Reset form
+      setMonthlyInput({
+        state: user.state || '',
+        month: new Date().toISOString().slice(0, 7),
+        districts: {},
+        scCount: 0,
+        stCount: 0,
+        ewsCount: 0,
+        womenCount: 0,
+        fundReceived: 0,
+        fundUtilized: 0,
+        remarks: ''
+      });
+      setStudentFile(null);
+      setApprovalDoc(null);
+    } catch (error) {
+      console.error('Supabase Sync Failed:', error);
+      alert(`Submission failed: ${error.message || 'Check connection'}`);
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const TabButton = ({ id, label }) => (
@@ -225,11 +339,29 @@ export default function SDUYDashboard() {
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-xl font-bold text-slate-800">SDUY Project Dashboard</h1>
-              <p className="text-sm text-slate-500">Skill Development of Unemployed Youths — PMU Monitoring System</p>
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-lg text-xl font-black">S</div>
+              <div>
+                <h1 className="text-xl font-bold text-slate-800">SDUY Project Dashboard</h1>
+                <p className="text-sm text-slate-500">Skill Development of Unemployed Youths — PMU Monitoring System</p>
+              </div>
             </div>
             <div className="flex items-center gap-4">
+              {user && (
+                <div className="flex items-center gap-3 pr-4 border-r border-slate-200 mr-2">
+                  <div className="text-right">
+                    <p className="text-xs font-bold text-slate-800 uppercase tracking-tighter">{user.name}</p>
+                    <p className="text-[10px] text-slate-500 font-medium">{user.role}</p>
+                  </div>
+                  <button 
+                    onClick={handleLogout}
+                    className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors"
+                    title="Logout"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+                  </button>
+                </div>
+              )}
               <select className="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white">
                 <option>March 2026</option>
                 <option>February 2026</option>
@@ -243,20 +375,66 @@ export default function SDUYDashboard() {
         </div>
       </header>
 
-      {/* Navigation Tabs */}
-      <div className="bg-white border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-6 py-3">
-          <div className="flex gap-2 flex-wrap">
-            <TabButton id="overview" label="📊 Overview" />
-            <TabButton id="features" label="🚀 Project Features" />
-            <TabButton id="states" label="🗺️ State Progress" />
-            <TabButton id="courses" label="📚 Courses" />
-            <TabButton id="financial" label="💰 Financial" />
-            <TabButton id="input" label="📝 Co-PI Input" />
-            <TabButton id="reports" label="📄 Reports" />
+      {!user ? (
+        <div className="max-w-md mx-auto mt-20 p-8 bg-white rounded-2xl border border-slate-200 shadow-xl">
+          <div className="text-center mb-8">
+            <div className="w-16 h-16 rounded-2xl bg-slate-900 mx-auto flex items-center justify-center text-white text-3xl font-black shadow-lg mb-4">S</div>
+            <h2 className="text-2xl font-bold text-slate-800 tracking-tight">Admin Gateway</h2>
+            <p className="text-slate-500 text-sm">Please sign in to access the SDUY Monitoring System</p>
+          </div>
+          
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1 ml-1">Username</label>
+              <input 
+                type="text" 
+                value={loginForm.username}
+                onChange={e => setLoginForm({...loginForm, username: e.target.value})}
+                placeholder="e.g. odisha_copi"
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-slate-800 focus:ring-1 focus:ring-slate-800 outline-none transition-all"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1 ml-1">Password</label>
+              <input 
+                type="password"
+                value={loginForm.password}
+                onChange={e => setLoginForm({...loginForm, password: e.target.value})}
+                placeholder="••••••••"
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-slate-800 focus:ring-1 focus:ring-slate-800 outline-none transition-all"
+                required
+              />
+            </div>
+            <button 
+              type="submit"
+              className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 shadow-lg shadow-slate-200 transition-all hover:-translate-y-0.5"
+            >
+              Sign In
+            </button>
+          </form>
+          
+          <div className="mt-8 p-4 rounded-xl bg-slate-50 border border-slate-100 text-[10px] text-slate-400 leading-relaxed uppercase tracking-wider text-center">
+            Authorized Personnel Only • IP Logged for Security
           </div>
         </div>
-      </div>
+      ) : (
+        <>
+        {/* Navigation Tabs */}
+        <div className="bg-white border-b border-slate-200">
+          <div className="max-w-7xl mx-auto px-6 py-3">
+            <div className="flex gap-2 flex-wrap">
+              <TabButton id="overview" label="📊 Overview" />
+              <TabButton id="features" label="🚀 Project Features" />
+              <TabButton id="states" label="🗺️ State Progress" />
+              <TabButton id="courses" label="📚 Courses" />
+              <TabButton id="financial" label="💰 Financial" />
+              <TabButton id="input" label="📝 Co-PI Input" />
+              <TabButton id="reports" label="📄 Reports" />
+            </div>
+          </div>
+        </div>
+
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-6">
@@ -975,22 +1153,57 @@ export default function SDUYDashboard() {
                 placeholder="Enter any issues, challenges, or remarks for this month..."
               />
 
+              <div className="grid md:grid-cols-2 gap-6 mb-8">
+                <div className="p-4 rounded-xl border-2 border-dashed border-slate-200 hover:border-slate-800 transition-colors bg-slate-50">
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">Student List (XLSX) *</label>
+                  <p className="text-[10px] text-slate-500 mb-3 uppercase tracking-tighter">Format: As per template @student format batch.xlsx</p>
+                  <input 
+                    type="file" 
+                    accept=".xlsx, .xls"
+                    onChange={(e) => setStudentFile(e.target.files[0])}
+                    className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-slate-900 file:text-white hover:file:bg-slate-800"
+                  />
+                  {studentFile && <p className="mt-2 text-xs text-emerald-600 font-medium">✓ {studentFile.name}</p>}
+                </div>
+                <div className="p-4 rounded-xl border-2 border-dashed border-slate-200 hover:border-slate-800 transition-colors bg-slate-50">
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">Batch Approval Copy (DOCX) *</label>
+                  <p className="text-[10px] text-slate-500 mb-3 uppercase tracking-tighter">Format: Scanned copy of signed approval</p>
+                  <input 
+                    type="file" 
+                    accept=".docx, .doc, .pdf"
+                    onChange={(e) => setApprovalDoc(e.target.files[0])}
+                    className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-slate-900 file:text-white hover:file:bg-slate-800"
+                  />
+                  {approvalDoc && <p className="mt-2 text-xs text-emerald-600 font-medium">✓ {approvalDoc.name}</p>}
+                </div>
+              </div>
+
               <div className="flex gap-3">
                 <button 
                   onClick={handleSubmitMonthlyData}
-                  className="px-6 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700"
+                  disabled={isUploading}
+                  className={`px-6 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700 flex items-center gap-2 ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  Submit Report
+                  {isUploading ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      Uploading...
+                    </>
+                  ) : 'Submit Final Report'}
                 </button>
                 <button className="px-6 py-2 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50">
                   Save Draft
                 </button>
                 <button 
-                  onClick={() => setMonthlyInput({
-                    state: '', month: new Date().toISOString().slice(0, 7), districts: {},
-                    scCount: 0, stCount: 0, ewsCount: 0, womenCount: 0,
-                    fundReceived: 0, fundUtilized: 0, remarks: ''
-                  })}
+                  onClick={() => {
+                    setMonthlyInput({
+                      state: user.state || '', month: new Date().toISOString().slice(0, 7), districts: {},
+                      scCount: 0, stCount: 0, ewsCount: 0, womenCount: 0,
+                      fundReceived: 0, fundUtilized: 0, remarks: ''
+                    });
+                    setStudentFile(null);
+                    setApprovalDoc(null);
+                  }}
                   className="px-6 py-2 text-slate-500 text-sm hover:text-slate-700"
                 >
                   Clear
@@ -1000,16 +1213,36 @@ export default function SDUYDashboard() {
 
             {submissions.length > 0 && (
               <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-                <h3 className="font-semibold text-slate-700 mb-4">Recent Submissions</h3>
-                <div className="space-y-3">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-semibold text-slate-700">Recent Submissions History</h3>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Live from Supabase</span>
+                </div>
+                <div className="space-y-4">
                   {submissions.map(sub => (
-                    <div key={sub.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                      <div>
-                        <span className="font-medium text-slate-700">{sub.state}</span>
-                        <span className="text-slate-400 mx-2">•</span>
-                        <span className="text-sm text-slate-500">{sub.month}</span>
+                    <div key={sub.id} className="flex flex-col p-4 bg-slate-50 rounded-xl border border-slate-100 hover:border-slate-300 transition-colors">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                          <span className="font-bold text-slate-800 tracking-tight">{sub.state}</span>
+                        </div>
+                        <span className="text-[10px] font-bold text-slate-500 bg-white px-2 py-1 rounded shadow-sm border border-slate-200">{sub.month}</span>
                       </div>
-                      <span className="text-xs text-emerald-600 bg-emerald-50 px-2 py-1 rounded">Submitted</span>
+                      <div className="grid grid-cols-2 gap-2 mb-3">
+                        <div className="flex items-center gap-2 text-xs text-slate-600 bg-white/50 p-2 rounded-lg border border-slate-100">
+                          <span className="opacity-50">📊</span>
+                          <span className="truncate">{sub.studentFileName}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-slate-600 bg-white/50 p-2 rounded-lg border border-slate-100">
+                          <span className="opacity-50">📄</span>
+                          <span className="truncate">{sub.approvalDocName}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-slate-400 italic">Submitted {new Date(sub.submittedAt).toLocaleDateString()}</span>
+                        <span className="px-2 py-1 text-[9px] font-black uppercase tracking-tighter bg-emerald-100 text-emerald-700 rounded ring-1 ring-emerald-200">
+                          {sub.status || 'Verified'}
+                        </span>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1077,7 +1310,9 @@ export default function SDUYDashboard() {
           </div>
         )}
 
-      </main>
+        </main>
+        </>
+      )}
 
       {/* Footer */}
       <footer className="border-t border-slate-200 bg-white mt-8">

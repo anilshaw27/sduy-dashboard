@@ -362,16 +362,6 @@ export default function SDUYDashboard() {
                 <p className="text-sm text-slate-500">Skill Development of Unemployed Youths — PMU Monitoring System</p>
               </div>
             </div>
-            <div className="flex items-center gap-4">
-              <select className="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white">
-                <option>March 2026</option>
-                <option>February 2026</option>
-                <option>January 2026</option>
-              </select>
-              <button className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors">
-                Export Report
-              </button>
-            </div>
           </div>
         </div>
       </header>

@@ -1342,8 +1342,8 @@ export default function SDUYDashboard() {
                   <p className="font-medium">Director, NIELIT Bhubaneswar</p>
                 </div>
                 <div className="text-[10px]">
-                  <p className="text-slate-400 uppercase font-black tracking-tighter mb-1">PMU Support</p>
-                  <p className="font-medium underline">sduy-pmu@nielit.gov.in</p>
+                  <p className="text-slate-400 uppercase font-black tracking-tighter mb-1">Project Co-PI</p>
+                  <p className="font-medium">Respective NIELIT Centres</p>
                 </div>
               </div>
             </div>

@@ -146,6 +146,22 @@ export default function SDUYDashboard() {
   const [studentFile, setStudentFile] = useState(null);
   const [approvalDoc, setApprovalDoc] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
+  
+  // Timeline Target Tracker - Dynamic Calculations
+  const projectStart = new Date(2024, 5); // June 2024 (Month 5 zero-indexed)
+  const reportDate = new Date(2026, 2); // March 2026
+  const monthsPassed = (reportDate.getFullYear() - projectStart.getFullYear()) * 12 + (reportDate.getMonth() - projectStart.getMonth()) + 1; // 22
+  const totalProjectTarget = 50040;
+  const targetPerMonth = totalProjectTarget / 36;
+  const expectedTarget = Math.round(monthsPassed * targetPerMonth);
+  
+  const actuallyEnrolled = data.summary.enrolled;
+  const actuallyTrained = data.summary.enrolled - data.summary.training; // 5050 (Enrolled - Ongoing training)
+  const actuallyCertified = data.summary.certified; // 2435
+  
+  const enrolledProgressPercent = Math.round((actuallyEnrolled / expectedTarget) * 100);
+  const trainedProgressPercent = Math.round((actuallyTrained / expectedTarget) * 100);
+  const certifiedProgressPercent = Math.round((actuallyCertified / expectedTarget) * 100);
 
   useEffect(() => {
     const fetchSubmissions = async () => {
@@ -335,9 +351,9 @@ export default function SDUYDashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-slate-50 to-white">
-      {/* Header */}
+      {/* Header (Public) */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 py-4">
+        <div className="max-w-[1600px] mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-lg text-xl font-black">S</div>
@@ -347,21 +363,6 @@ export default function SDUYDashboard() {
               </div>
             </div>
             <div className="flex items-center gap-4">
-              {user && (
-                <div className="flex items-center gap-3 pr-4 border-r border-slate-200 mr-2">
-                  <div className="text-right">
-                    <p className="text-xs font-bold text-slate-800 uppercase tracking-tighter">{user.name}</p>
-                    <p className="text-[10px] text-slate-500 font-medium">{user.role}</p>
-                  </div>
-                  <button 
-                    onClick={handleLogout}
-                    className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 hover:bg-red-50 hover:text-red-600 transition-colors"
-                    title="Logout"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
-                  </button>
-                </div>
-              )}
               <select className="px-3 py-2 rounded-lg border border-slate-300 text-sm bg-white">
                 <option>March 2026</option>
                 <option>February 2026</option>
@@ -375,90 +376,28 @@ export default function SDUYDashboard() {
         </div>
       </header>
 
-      {!user ? (
-        <div className="max-w-md mx-auto mt-20 p-8 bg-white rounded-2xl border border-slate-200 shadow-xl">
-          <div className="text-center mb-8">
-            <div className="w-16 h-16 rounded-2xl bg-slate-900 mx-auto flex items-center justify-center text-white text-3xl font-black shadow-lg mb-4">S</div>
-            <h2 className="text-2xl font-bold text-slate-800 tracking-tight">Admin Gateway</h2>
-            <p className="text-slate-500 text-sm">Please sign in to access the SDUY Monitoring System</p>
-          </div>
-          
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1 ml-1">Username</label>
-              <input 
-                type="text" 
-                value={loginForm.username}
-                onChange={e => setLoginForm({...loginForm, username: e.target.value})}
-                placeholder="e.g. odisha_copi"
-                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-slate-800 focus:ring-1 focus:ring-slate-800 outline-none transition-all"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1 ml-1">Password</label>
-              <input 
-                type="password"
-                value={loginForm.password}
-                onChange={e => setLoginForm({...loginForm, password: e.target.value})}
-                placeholder="••••••••"
-                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-slate-800 focus:ring-1 focus:ring-slate-800 outline-none transition-all"
-                required
-              />
-            </div>
-            <button 
-              type="submit"
-              className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 shadow-lg shadow-slate-200 transition-all hover:-translate-y-0.5"
-            >
-              Sign In
-            </button>
-          </form>
-          
-          <div className="mt-8 p-4 rounded-xl bg-slate-50 border border-slate-100 text-[10px] text-slate-400 leading-relaxed uppercase tracking-wider text-center">
-            Authorized Personnel Only • IP Logged for Security
+      {/* Navigation Tabs (Public) */}
+      <div className="bg-white border-b border-slate-200">
+        <div className="max-w-[1600px] mx-auto px-6 py-3">
+          <div className="flex gap-2 flex-wrap">
+            <TabButton id="overview" label="📊 Overview" />
+            <TabButton id="features" label="🚀 Project Features" />
+            <TabButton id="states" label="🗺️ State Progress" />
+            <TabButton id="courses" label="📚 Courses" />
+            <TabButton id="financial" label="💰 Financial" />
+            <TabButton id="input" label="📝 Co-PI Input" />
+            <TabButton id="reports" label="📄 Reports" />
           </div>
         </div>
-      ) : (
-        <>
-        {/* Navigation Tabs */}
-        <div className="bg-white border-b border-slate-200">
-          <div className="max-w-7xl mx-auto px-6 py-3">
-            <div className="flex gap-2 flex-wrap">
-              <TabButton id="overview" label="📊 Overview" />
-              <TabButton id="features" label="🚀 Project Features" />
-              <TabButton id="states" label="🗺️ State Progress" />
-              <TabButton id="courses" label="📚 Courses" />
-              <TabButton id="financial" label="💰 Financial" />
-              <TabButton id="input" label="📝 Co-PI Input" />
-              <TabButton id="reports" label="📄 Reports" />
-            </div>
-          </div>
-        </div>
+      </div>
 
-
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-6 py-6">
+      <main className="max-w-[1600px] mx-auto px-6 py-6">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          {/* LEFT CONTENT AREA */}
+          <div className="lg:col-span-3">
         
         {/* OVERVIEW TAB */}
-        {activeTab === 'overview' && (() => {
-          // Dynamic calculation for the timeline target
-          const projectStart = new Date(2024, 5); // June 2024 (Month 5 zero-indexed)
-          // For now, assuming current reporting date is March 2026 based on the dropdown default.
-          const reportDate = new Date(2026, 2); // March 2026
-          const monthsPassed = (reportDate.getFullYear() - projectStart.getFullYear()) * 12 + (reportDate.getMonth() - projectStart.getMonth()) + 1; // 22
-          const totalTarget = 50040;
-          const targetPerMonth = totalTarget / 36;
-          const expectedTarget = Math.round(monthsPassed * targetPerMonth);
-          
-          const actuallyEnrolled = data.summary.enrolled;
-          const actuallyTrained = data.summary.enrolled - data.summary.training; // 5050 (Enrolled - Ongoing training)
-          const actuallyCertified = data.summary.certified; // 2435
-          
-          const enrolledProgressPercent = Math.round((actuallyEnrolled / expectedTarget) * 100);
-          const trainedProgressPercent = Math.round((actuallyTrained / expectedTarget) * 100);
-          const certifiedProgressPercent = Math.round((actuallyCertified / expectedTarget) * 100);
-
-          return (
+        {activeTab === 'overview' && (
           <div className="space-y-6">
             {/* Timeline Target Tracker */}
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden">
@@ -661,7 +600,7 @@ export default function SDUYDashboard() {
               ))}
             </div>
           </div>
-        )})()}
+        )}
 
         {/* PROJECT FEATURES TAB */}
         {activeTab === 'features' && (
@@ -1038,10 +977,18 @@ export default function SDUYDashboard() {
           </div>
         )}
 
-        {/* CO-PI INPUT TAB */}
+        {/* CO-PI INPUT TAB (Protected) */}
         {activeTab === 'input' && (
-          <div className="max-w-4xl space-y-6">
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+          !user ? (
+            <div className="bg-white rounded-xl border border-slate-200 p-12 text-center shadow-sm">
+              <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">🔒</div>
+              <h3 className="text-xl font-bold text-slate-800 mb-2">Login Required</h3>
+              <p className="text-slate-500 mb-6">Please use the login panel on the right to access the data submission portal.</p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+
               <h3 className="font-semibold text-slate-700 mb-1">Monthly Progress Submission</h3>
               <p className="text-sm text-slate-500 mb-6">Co-PIs can submit monthly state-level progress data</p>
 
@@ -1249,11 +1196,21 @@ export default function SDUYDashboard() {
               </div>
             )}
           </div>
-        )}
+        )
+      )}
 
-        {/* REPORTS TAB */}
+
+        {/* REPORTS TAB (Protected) */}
         {activeTab === 'reports' && (
-          <div className="space-y-6">
+          !user ? (
+             <div className="bg-white rounded-xl border border-slate-200 p-12 text-center shadow-sm">
+              <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">🔒</div>
+              <h3 className="text-xl font-bold text-slate-800 mb-2">Administrative Access Restricted</h3>
+              <p className="text-slate-500 mb-6">You must be logged in as PI or Super Admin to view project reports.</p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+
             <div className="grid md:grid-cols-3 gap-4">
               <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
                 <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center mb-3">
@@ -1308,15 +1265,105 @@ export default function SDUYDashboard() {
               </div>
             </div>
           </div>
-        )}
-
-        </main>
-        </>
+        )
       )}
+    </div>
 
-      {/* Footer */}
+          {/* RIGHT: AUTH PANEL (25%) */}
+          <div className="lg:col-span-1 space-y-6">
+            {!user ? (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sticky top-24">
+                <div className="text-center mb-6">
+                  <div className="w-12 h-12 rounded-xl bg-slate-900 mx-auto flex items-center justify-center text-white text-xl font-black shadow-lg mb-3">S</div>
+                  <h2 className="text-lg font-bold text-slate-800 tracking-tight">Admin Gateway</h2>
+                  <p className="text-slate-400 text-xs">Sign in to upload student details</p>
+                </div>
+                
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-1">Username</label>
+                    <input 
+                      type="text" 
+                      value={loginForm.username}
+                      onChange={e => setLoginForm({...loginForm, username: e.target.value})}
+                      placeholder="e.g. odisha_copi"
+                      className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 focus:border-slate-800 outline-none transition-all"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-1">Password</label>
+                    <input 
+                      type="password"
+                      value={loginForm.password}
+                      onChange={e => setLoginForm({...loginForm, password: e.target.value})}
+                      placeholder="••••••••"
+                      className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 focus:border-slate-800 outline-none transition-all"
+                      required
+                    />
+                  </div>
+                  <button 
+                    type="submit"
+                    className="w-full py-2 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 shadow-md transition-all active:scale-95"
+                  >
+                    Sign In
+                  </button>
+                </form>
+                
+                <div className="mt-6 p-3 rounded-lg bg-slate-50 border border-slate-100 text-[10px] text-slate-400 leading-relaxed uppercase tracking-wider text-center">
+                  Authorized Personnel Only
+                </div>
+              </div>
+            ) : (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-xl p-6 sticky top-24">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 rounded-full bg-slate-900 flex items-center justify-center text-white text-sm font-bold shadow-md">
+                    {user.name.charAt(0)}
+                  </div>
+                  <div className="overflow-hidden">
+                    <p className="text-sm font-bold text-slate-800 truncate">{user.name}</p>
+                    <p className="text-[10px] text-slate-500 font-medium uppercase tracking-tighter">{user.role}</p>
+                  </div>
+                </div>
+                
+                <div className="space-y-2">
+                  {user.state && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-lg">
+                      <p className="text-[10px] text-emerald-600 font-bold uppercase mb-1">State Access</p>
+                      <p className="text-sm font-bold text-emerald-800">{user.state}</p>
+                    </div>
+                  )}
+                  <button 
+                    onClick={handleLogout}
+                    className="w-full py-2 border border-slate-200 text-slate-600 rounded-lg text-sm font-medium hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all flex items-center justify-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+                    Logout System
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 text-white shadow-xl">
+              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Key Contacts</h4>
+              <div className="space-y-3">
+                <div className="text-[10px]">
+                  <p className="text-slate-400 uppercase font-black tracking-tighter mb-1">Project Investigator</p>
+                  <p className="font-medium">Director, NIELIT Bhubaneswar</p>
+                </div>
+                <div className="text-[10px]">
+                  <p className="text-slate-400 uppercase font-black tracking-tighter mb-1">PMU Support</p>
+                  <p className="font-medium underline">sduy-pmu@nielit.gov.in</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      {/* Footer (Public) */}
       <footer className="border-t border-slate-200 bg-white mt-8">
-        <div className="max-w-7xl mx-auto px-6 py-4">
+        <div className="max-w-[1600px] mx-auto px-6 py-4">
           <div className="flex items-center justify-between text-sm text-slate-500">
             <span>SDUY Project — PMU, NIELIT Bhubaneswar</span>
             <span>Last updated: {new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
@@ -1326,3 +1373,4 @@ export default function SDUYDashboard() {
     </div>
   );
 }
+

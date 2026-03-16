@@ -143,6 +143,16 @@ export default function SDUYDashboard() {
     remarks: ''
   });
   const [submissions, setSubmissions] = useState([]);
+  const [students, setStudents] = useState([]);
+  const [isFetchingStudents, setIsFetchingStudents] = useState(false);
+  const [candidateSearch, setCandidateSearch] = useState('');
+  const [showCandidateForm, setShowCandidateForm] = useState(false);
+  const [newCandidate, setNewCandidate] = useState({
+    batchNo: '', courseName: '', nielitRegNo: '', name: '', fatherName: '', 
+    category: 'General', gender: 'Male', aadhaarNo: '', apaarId: '', religion: '', 
+    whatsappNo: '', address: '', isEmployed: 'No', instituteName: '', 
+    venueAddress: '', hqAccrNo: '', district: '', regMonth: new Date().toISOString().slice(0, 7)
+  });
   const [studentFile, setStudentFile] = useState(null);
   const [approvalDoc, setApprovalDoc] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -177,6 +187,30 @@ export default function SDUYDashboard() {
 
     if (user) {
       fetchSubmissions();
+    }
+  }, [user]);
+
+  useEffect(() => {
+    const fetchStudents = async () => {
+      if (!user) return;
+      setIsFetchingStudents(true);
+      try {
+        let query = supabase.from('students').select('*').order('created_at', { ascending: false });
+        if (user.role === 'Co-PI' && user.state) {
+          query = query.eq('state', user.state);
+        }
+        const { data: stds, error } = await query;
+        if (error) throw error;
+        setStudents(stds || []);
+      } catch (err) {
+        console.error('Error fetching students:', err);
+      } finally {
+        setIsFetchingStudents(false);
+      }
+    };
+
+    if (user) {
+      fetchStudents();
     }
   }, [user]);
 
@@ -223,6 +257,149 @@ export default function SDUYDashboard() {
     setUser(null);
     localStorage.removeItem('sduy_user');
     setActiveTab('overview');
+  };
+
+  const handleAddStudent = async (e) => {
+    e.preventDefault();
+    if (!newCandidate.name || !newCandidate.courseName) {
+      alert('Name and Course are required');
+      return;
+    }
+    
+    setIsUploading(true);
+    try {
+      const studentToInsert = {
+        ...newCandidate,
+        state: user.state,
+        created_at: new Date().toISOString()
+      };
+
+      const { data: inserted, error } = await supabase
+        .from('students')
+        .insert([studentToInsert])
+        .select();
+      
+      if (error) throw error;
+      
+      alert('Student added successfully');
+      setNewCandidate({
+        batchNo: '', courseName: '', nielitRegNo: '', name: '', fatherName: '', 
+        category: 'General', gender: 'Male', aadhaarNo: '', apaarId: '', religion: '', 
+        whatsappNo: '', address: '', isEmployed: 'No', instituteName: '', 
+        venueAddress: '', hqAccrNo: '', district: '', regMonth: new Date().toISOString().slice(0, 7)
+      });
+      setShowCandidateForm(false);
+      
+      // Refresh list
+      const query = supabase.from('students').select('*').order('created_at', { ascending: false });
+      if (user.role === 'Co-PI' && user.state) {
+        query.eq('state', user.state);
+      }
+      const { data: updatedStds } = await query;
+      setStudents(updatedStds || []);
+    } catch (err) {
+      console.error('Error adding student:', err);
+      alert('Failed to add student');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleBulkCsvUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (evt) => {
+        const bstr = evt.target.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const jsonData = XLSX.utils.sheet_to_json(ws);
+
+        const studentRecords = jsonData.map(row => ({
+          batchNo: row['Batch No'] || row['Batch'] || '',
+          courseName: row['Course Name'] || row['Course'] || '',
+          nielitRegNo: row['NIELIT Registration No. (NIELIT Portal)'] || row['NIELIT Reg No'] || '',
+          name: row['Name of candidate'] || row['Name'] || '',
+          fatherName: row['Father\'s Name'] || row['Father Name'] || '',
+          category: row['Category (SC/ST/EWS)'] || row['Category'] || '',
+          gender: row['Gender (Male/Female)'] || row['Gender'] || '',
+          aadhaarNo: row['Aadhaar Card'] || row['Aadhaar'] || '',
+          apaarId: row['APAAR ID'] || '',
+          religion: row['Religion'] || '',
+          whatsappNo: row['Watsapp No. of candidates'] || row['Whatsapp No'] || '',
+          address: row['Communication address and districts of the candidate'] || row['Address'] || '',
+          isEmployed: row['Candidate Currently employed (Yes/No)'] || row['Employed'] || 'No',
+          instituteName: row['Name of Institute'] || '',
+          venueAddress: row['Training venue Address'] || '',
+          hqAccrNo: row['HQ Accr number'] || '',
+          district: row['District'] || '',
+          regMonth: row['Month of Registration'] || row['Reg Month'] || row['Month'] || new Date().toISOString().slice(0, 7),
+          state: user.state,
+          created_at: new Date().toISOString()
+        })).filter(r => r.name);
+
+        if (studentRecords.length === 0) {
+          alert('No valid student records found in file');
+          setIsUploading(false);
+          return;
+        }
+
+        const { error } = await supabase.from('students').insert(studentRecords);
+        if (error) throw error;
+
+        alert(`Successfully uploaded ${studentRecords.length} students`);
+        
+        // Refresh list
+        const { data: updatedStds } = await supabase
+          .from('students')
+          .select('*')
+          .eq('state', user.state)
+          .order('created_at', { ascending: false });
+        setStudents(updatedStds || []);
+        setIsUploading(false);
+      };
+      reader.readAsBinaryString(file);
+    } catch (err) {
+      console.error('Bulk upload error:', err);
+      alert('Failed to upload students: ' + err.message);
+      setIsUploading(false);
+    }
+  };
+
+  const handleDownloadStudentList = () => {
+    if (students.length === 0) {
+      alert('No students to download');
+      return;
+    }
+
+    const exportData = students.map((s, idx) => ({
+      'Sl. No.': idx + 1,
+      'Batch No': s.batchNo,
+      'Course Name': s.courseName,
+      'NIELIT Reg No': s.nielitRegNo,
+      'Name of candidate': s.name,
+      'Father\'s Name': s.fatherName,
+      'Category': s.category,
+      'Gender': s.gender,
+      'Aadhaar Card': s.aadhaarNo,
+      'APAAR ID': s.apaarId,
+      'Religion': s.religion,
+      'Whatsapp No': s.whatsappNo,
+      'Address': s.address,
+      'Currently Employed': s.isEmployed,
+      'District': s.district,
+      'Registration Month': s.regMonth,
+      'State': s.state
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(exportData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Students');
+    XLSX.writeFile(wb, `StudentList_${user.state}_${new Date().toISOString().slice(0,10)}.xlsx`);
   };
 
   const MetricCard = ({ label, value, subtext, trend }) => (
@@ -304,11 +481,62 @@ export default function SDUYDashboard() {
           studentFileUrl: studentPath,
           approvalDocUrl: docPath,
           status: 'Pending Verification',
-          submittedBy: user.name
+          submittedBy: (user && user.name) || 'Unknown'
         }])
         .select();
 
       if (dbError) throw dbError;
+
+      // NEW: Parse Excel for database entry if available
+      if (studentFile) {
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          try {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, {type: 'array'});
+            const sheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[sheetName];
+            const jsonData = XLSX.utils.sheet_to_json(worksheet);
+            
+            const studentRecords = jsonData.map(row => ({
+              batchNo: row['Batch No'] || row['Batch'] || '',
+              courseName: row['Course Name'] || row['Course'] || '',
+              nielitRegNo: row['NIELIT Registration No. (NIELIT Portal)'] || row['NIELIT Reg No'] || '',
+              name: row['Name of candidate'] || row['Name'] || '',
+              fatherName: row['Father\'s Name'] || row['Father Name'] || '',
+              category: row['Category (SC/ST/EWS)'] || row['Category'] || '',
+              gender: row['Gender (Male/Female)'] || row['Gender'] || '',
+              aadhaarNo: row['Aadhaar Card'] || row['Aadhaar'] || '',
+              apaarId: row['APAAR ID'] || '',
+              religion: row['Religion'] || '',
+              whatsappNo: row['Watsapp No. of candidates'] || row['Whatsapp No'] || '',
+              address: row['Communication address and districts of the candidate'] || row['Address'] || '',
+              isEmployed: row['Candidate Currently employed (Yes/No)'] || row['Employed'] || 'No',
+              instituteName: row['Name of Institute'] || '',
+              venueAddress: row['Training venue Address'] || '',
+              hqAccrNo: row['HQ Accr number'] || '',
+              district: row['District'] || '',
+              regMonth: row['Month of Registration'] || row['Reg Month'] || new Date().toISOString().slice(0, 7),
+              state: user.state,
+              created_at: new Date().toISOString()
+            })).filter(r => r.name);
+            
+            if (studentRecords.length > 0) {
+              await supabase.from('students').insert(studentRecords);
+              // Refresh students list
+              const query = supabase.from('students').select('*').order('created_at', { ascending: false });
+              if (user.role === 'Co-PI' && user.state) {
+                query.eq('state', user.state);
+              }
+              const { data: updatedStds } = await query;
+              setStudents(updatedStds || []);
+            }
+          } catch (err) {
+            console.error('Error parsing student Excel:', err);
+          }
+        };
+        reader.readAsArrayBuffer(studentFile);
+      }
 
       setSubmissions([newSub[0], ...submissions]);
       alert('Monthly data and documents submitted successfully and synced to Supabase!');
@@ -977,286 +1205,332 @@ export default function SDUYDashboard() {
             </div>
           ) : (
             <div className="space-y-6">
+              {/* Monthly Submission UI */}
               <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-800">Monthly Progress Submission</h3>
+                    <p className="text-sm text-slate-500">Submit data for {user.state} — {new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}</p>
+                  </div>
+                  <span className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold ring-1 ring-emerald-200">System Ready</span>
+                </div>
 
-              <h3 className="font-semibold text-slate-700 mb-1">Monthly Progress Submission</h3>
-              <p className="text-sm text-slate-500 mb-6">Co-PIs can submit monthly state-level progress data</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                   {/* Form Fields - Category Totals */}
+                   <div className="space-y-4">
+                     <h4 className="text-[10px] uppercase font-black tracking-widest text-slate-400 border-b border-slate-100 pb-1">Category Breakdown</h4>
+                     <div className="grid grid-cols-2 gap-3">
+                       <div>
+                         <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">SC Candidates</label>
+                         <input type="number" value={monthlyInput.scCount} onChange={(e) => setMonthlyInput({...monthlyInput, scCount: parseInt(e.target.value)}) } className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 focus:border-slate-800 outline-none" />
+                       </div>
+                       <div>
+                         <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">ST Candidates</label>
+                         <input type="number" value={monthlyInput.stCount} onChange={(e) => setMonthlyInput({...monthlyInput, stCount: parseInt(e.target.value)}) } className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 focus:border-slate-800 outline-none" />
+                       </div>
+                       <div>
+                         <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">EWS Candidates</label>
+                         <input type="number" value={monthlyInput.ewsCount} onChange={(e) => setMonthlyInput({...monthlyInput, ewsCount: parseInt(e.target.value)}) } className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 focus:border-slate-800 outline-none" />
+                       </div>
+                       <div>
+                         <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Women Candidates</label>
+                         <input type="number" value={monthlyInput.womenCount} onChange={(e) => setMonthlyInput({...monthlyInput, womenCount: parseInt(e.target.value)}) } className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 focus:border-slate-800 outline-none" />
+                       </div>
+                     </div>
+                   </div>
 
-              <div className="grid md:grid-cols-2 gap-4 mb-6">
-                <div>
-                  <label className="block text-sm font-medium text-slate-600 mb-1">State *</label>
-                  <select 
-                    value={monthlyInput.state}
-                    onChange={(e) => setMonthlyInput({...monthlyInput, state: e.target.value})}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
-                  >
-                    <option value="">Select state</option>
-                    {STATES.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-600 mb-1">Reporting Month *</label>
-                  <input 
-                    type="month"
-                    value={monthlyInput.month}
-                    onChange={(e) => setMonthlyInput({...monthlyInput, month: e.target.value})}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
-                  />
-                </div>
-              </div>
-
-              <h4 className="font-medium text-slate-700 mb-3">Category Breakdown</h4>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                <div>
-                  <label className="block text-xs text-slate-500 mb-1">SC Candidates</label>
-                  <input 
-                    type="number"
-                    value={monthlyInput.scCount || ''}
-                    onChange={(e) => setMonthlyInput({...monthlyInput, scCount: parseInt(e.target.value) || 0})}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
-                    placeholder="0"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-500 mb-1">ST Candidates</label>
-                  <input 
-                    type="number"
-                    value={monthlyInput.stCount || ''}
-                    onChange={(e) => setMonthlyInput({...monthlyInput, stCount: parseInt(e.target.value) || 0})}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
-                    placeholder="0"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-500 mb-1">General-EWS</label>
-                  <input 
-                    type="number"
-                    value={monthlyInput.ewsCount || ''}
-                    onChange={(e) => setMonthlyInput({...monthlyInput, ewsCount: parseInt(e.target.value) || 0})}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
-                    placeholder="0"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-500 mb-1">Women</label>
-                  <input 
-                    type="number"
-                    value={monthlyInput.womenCount || ''}
-                    onChange={(e) => setMonthlyInput({...monthlyInput, womenCount: parseInt(e.target.value) || 0})}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
-                    placeholder="0"
-                  />
-                </div>
-              </div>
-
-              <h4 className="font-medium text-slate-700 mb-3">Financial Data (in Lakhs)</h4>
-              <div className="grid grid-cols-3 gap-4 mb-6">
-                <div>
-                  <label className="block text-xs text-slate-500 mb-1">Fund Received</label>
-                  <input 
-                    type="number"
-                    value={monthlyInput.fundReceived || ''}
-                    onChange={(e) => setMonthlyInput({...monthlyInput, fundReceived: parseFloat(e.target.value) || 0})}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
-                    placeholder="0"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-500 mb-1">Fund Utilized</label>
-                  <input 
-                    type="number"
-                    value={monthlyInput.fundUtilized || ''}
-                    onChange={(e) => setMonthlyInput({...monthlyInput, fundUtilized: parseFloat(e.target.value) || 0})}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm"
-                    placeholder="0"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-500 mb-1">Balance</label>
-                  <input 
-                    type="number"
-                    value={(monthlyInput.fundReceived - monthlyInput.fundUtilized).toFixed(2)}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm"
-                    readOnly
-                  />
-                </div>
-              </div>
-
-              <h4 className="font-medium text-slate-700 mb-3">Issues & Remarks</h4>
-              <textarea
-                value={monthlyInput.remarks}
-                onChange={(e) => setMonthlyInput({...monthlyInput, remarks: e.target.value})}
-                className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm min-h-[100px] mb-6"
-                placeholder="Enter any issues, challenges, or remarks for this month..."
-              />
-
-              <div className="grid md:grid-cols-2 gap-6 mb-8">
-                <div className="p-4 rounded-xl border-2 border-dashed border-slate-200 hover:border-slate-800 transition-colors bg-slate-50">
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">Student List (XLSX) *</label>
-                  <p className="text-[10px] text-slate-500 mb-3 uppercase tracking-tighter">Format: As per template @student format batch.xlsx</p>
-                  <input 
-                    type="file" 
-                    accept=".xlsx, .xls"
-                    onChange={(e) => setStudentFile(e.target.files[0])}
-                    className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-slate-900 file:text-white hover:file:bg-slate-800"
-                  />
-                  {studentFile && <p className="mt-2 text-xs text-emerald-600 font-medium">✓ {studentFile.name}</p>}
-                </div>
-                <div className="p-4 rounded-xl border-2 border-dashed border-slate-200 hover:border-slate-800 transition-colors bg-slate-50">
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">Batch Approval Copy (DOCX) *</label>
-                  <p className="text-[10px] text-slate-500 mb-3 uppercase tracking-tighter">Format: Scanned copy of signed approval</p>
-                  <input 
-                    type="file" 
-                    accept=".docx, .doc, .pdf"
-                    onChange={(e) => setApprovalDoc(e.target.files[0])}
-                    className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-slate-900 file:text-white hover:file:bg-slate-800"
-                  />
-                  {approvalDoc && <p className="mt-2 text-xs text-emerald-600 font-medium">✓ {approvalDoc.name}</p>}
-                </div>
-              </div>
-
-              <div className="flex gap-3">
-                <button 
-                  onClick={handleSubmitMonthlyData}
-                  disabled={isUploading}
-                  className={`px-6 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700 flex items-center gap-2 ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  {isUploading ? (
-                    <>
-                      <svg className="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                      Uploading...
-                    </>
-                  ) : 'Submit Final Report'}
-                </button>
-                <button className="px-6 py-2 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50">
-                  Save Draft
-                </button>
-                <button 
-                  onClick={() => {
-                    setMonthlyInput({
-                      state: user.state || '', month: new Date().toISOString().slice(0, 7), districts: {},
-                      scCount: 0, stCount: 0, ewsCount: 0, womenCount: 0,
-                      fundReceived: 0, fundUtilized: 0, remarks: ''
-                    });
-                    setStudentFile(null);
-                    setApprovalDoc(null);
-                  }}
-                  className="px-6 py-2 text-slate-500 text-sm hover:text-slate-700"
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
-
-            {submissions.length > 0 && (
-              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-semibold text-slate-700">Recent Submissions History</h3>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">Live from Supabase</span>
-                </div>
-                <div className="space-y-4">
-                  {submissions.map(sub => (
-                    <div key={sub.id} className="flex flex-col p-4 bg-slate-50 rounded-xl border border-slate-100 hover:border-slate-300 transition-colors">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                          <span className="font-bold text-slate-800 tracking-tight">{sub.state}</span>
+                   {/* Financial Data */}
+                   <div className="space-y-4">
+                     <h4 className="text-[10px] uppercase font-black tracking-widest text-slate-400 border-b border-slate-100 pb-1">Financial Data (₹)</h4>
+                     <div className="space-y-3">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Fund Received</label>
+                          <input type="number" value={monthlyInput.fundReceived} onChange={(e) => setMonthlyInput({...monthlyInput, fundReceived: parseInt(e.target.value)}) } className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 focus:border-slate-800 outline-none" />
                         </div>
-                        <span className="text-[10px] font-bold text-slate-500 bg-white px-2 py-1 rounded shadow-sm border border-slate-200">{sub.month}</span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 mb-3">
-                        <div className="flex items-center gap-2 text-xs text-slate-600 bg-white/50 p-2 rounded-lg border border-slate-100">
-                          <span className="opacity-50">📊</span>
-                          <span className="truncate">{sub.studentFileName}</span>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Fund Utilized</label>
+                          <input type="number" value={monthlyInput.fundUtilized} onChange={(e) => setMonthlyInput({...monthlyInput, fundUtilized: parseInt(e.target.value)}) } className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 focus:border-slate-800 outline-none" />
                         </div>
-                        <div className="flex items-center gap-2 text-xs text-slate-600 bg-white/50 p-2 rounded-lg border border-slate-100">
-                          <span className="opacity-50">📄</span>
-                          <span className="truncate">{sub.approvalDocName}</span>
+                     </div>
+                   </div>
+
+                   {/* File Uploads */}
+                   <div className="space-y-4">
+                     <h4 className="text-[10px] uppercase font-black tracking-widest text-slate-400 border-b border-slate-100 pb-1">Required Documents</h4>
+                     <div className="space-y-3">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Student List (XLSX)</label>
+                          <input type="file" accept=".xlsx" onChange={(e) => setStudentFile(e.target.files[0])} className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-[10px] file:font-black file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200" />
                         </div>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-slate-400 italic">Submitted {new Date(sub.submittedAt).toLocaleDateString()}</span>
-                        <span className="px-2 py-1 text-[9px] font-black uppercase tracking-tighter bg-emerald-100 text-emerald-700 rounded ring-1 ring-emerald-200">
-                          {sub.status || 'Verified'}
-                        </span>
-                      </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Batch Approval (DOCX)</label>
+                          <input type="file" accept=".docx" onChange={(e) => setApprovalDoc(e.target.files[0])} className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-[10px] file:font-black file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200" />
+                        </div>
+                     </div>
+                   </div>
+                </div>
+
+                <div className="mt-8 pt-6 border-t border-slate-100 flex items-center justify-between">
+                   <p className="text-[10px] text-slate-400 italic">Ensure all category totals match the uploaded student list.</p>
+                   <button 
+                    onClick={handleSubmitMonthlyData}
+                    disabled={isUploading}
+                    className={`px-8 py-3 bg-slate-900 text-white rounded-xl text-sm font-bold shadow-xl hover:bg-slate-800 active:scale-95 transition-all flex items-center gap-3 ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                   >
+                     {isUploading ? (
+                       <>
+                         <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
+                         Syncing to Cloud...
+                       </>
+                     ) : (
+                       <>🚀 Submit Monthly Report</>
+                     )}
+                   </button>
+                </div>
+              </div>
+
+              {/* CANDIDATE MANAGEMENT SECTION */}
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="bg-slate-800 p-6 text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-lg font-black tracking-tight flex items-center gap-2">
+                       Candidate Management System
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">State: {user.state} | Database Explorer</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+                      <input 
+                        type="text" 
+                        placeholder="Search by name or course..." 
+                        value={candidateSearch}
+                        onChange={(e) => setCandidateSearch(e.target.value)}
+                        className="bg-slate-700/50 border border-slate-600 text-white text-xs rounded-lg py-2 pl-9 pr-4 w-56 outline-none focus:border-slate-400 transition-all placeholder:text-slate-500"
+                      />
                     </div>
-                  ))}
+                    <button 
+                      onClick={handleDownloadStudentList}
+                      className="px-3 py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold shadow-md hover:bg-emerald-700 flex items-center gap-2 transition-all active:scale-95"
+                      title="Download Student List to Excel"
+                    >
+                      <span>📥 Download</span>
+                    </button>
+                    <label className="cursor-pointer px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold shadow-md hover:bg-blue-700 flex items-center gap-2 transition-all active:scale-95 whitespace-nowrap">
+                       <span>📁 Bulk CSV</span>
+                       <input type="file" accept=".csv,.xlsx" className="hidden" onChange={handleBulkCsvUpload} />
+                    </label>
+                    <button 
+                      onClick={() => setShowCandidateForm(!showCandidateForm)}
+                      className="px-4 py-2 bg-white text-slate-900 rounded-lg text-xs font-black shadow-lg hover:bg-slate-100 flex items-center gap-2 transition-all active:scale-95 whitespace-nowrap"
+                    >
+                      {showCandidateForm ? '✕ Close' : '+ Add'}
+                    </button>
+                  </div>
+                </div>
+
+                {showCandidateForm && (
+                  <div className="p-6 border-b border-slate-100 bg-slate-50/30">
+                    <h4 className="text-sm font-bold text-slate-800 mb-4 inline-flex items-center gap-2">
+                      <span className="w-6 h-6 rounded bg-slate-800 text-white flex items-center justify-center text-[10px]">📝</span>
+                      Comprehensive Candidate Entry
+                    </h4>
+                    <form onSubmit={handleAddStudent} className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Reg. Month *</label>
+                        <input type="month" required value={newCandidate.regMonth} onChange={(e) => setNewCandidate({...newCandidate, regMonth: e.target.value})} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Batch No</label>
+                        <input type="text" value={newCandidate.batchNo} onChange={(e) => setNewCandidate({...newCandidate, batchNo: e.target.value})} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Course Name *</label>
+                        <select required value={newCandidate.courseName} onChange={(e) => setNewCandidate({...newCandidate, courseName: e.target.value})} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200">
+                           <option value="">Select Course</option>
+                           {Object.keys(data.courses).map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">NIELIT Reg. No.</label>
+                        <input type="text" value={newCandidate.nielitRegNo} onChange={(e) => setNewCandidate({...newCandidate, nielitRegNo: e.target.value})} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Student Name *</label>
+                        <input type="text" required value={newCandidate.name} onChange={(e) => setNewCandidate({...newCandidate, name: e.target.value})} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Father's Name</label>
+                        <input type="text" value={newCandidate.fatherName} onChange={(e) => setNewCandidate({...newCandidate, fatherName: e.target.value})} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Category</label>
+                        <select value={newCandidate.category} onChange={(e) => setNewCandidate({...newCandidate, category: e.target.value})} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200">
+                           <option>General</option><option>SC</option><option>ST</option><option>OBC</option><option>EWS</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Gender</label>
+                        <select value={newCandidate.gender} onChange={(e) => setNewCandidate({...newCandidate, gender: e.target.value})} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200">
+                           <option>Male</option><option>Female</option><option>Other</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Aadhaar Card</label>
+                        <input type="text" value={newCandidate.aadhaarNo} onChange={(e) => setNewCandidate({...newCandidate, aadhaarNo: e.target.value})} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">APAAR ID</label>
+                        <input type="text" value={newCandidate.apaarId} onChange={(e) => setNewCandidate({...newCandidate, apaarId: e.target.value})} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Religion</label>
+                        <input type="text" value={newCandidate.religion} onChange={(e) => setNewCandidate({...newCandidate, religion: e.target.value})} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200" placeholder="e.g. Hindu" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Whatsapp No.</label>
+                        <input type="text" value={newCandidate.whatsappNo} onChange={(e) => setNewCandidate({...newCandidate, whatsappNo: e.target.value})} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200" />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Communication Address</label>
+                        <input type="text" value={newCandidate.address} onChange={(e) => setNewCandidate({...newCandidate, address: e.target.value})} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Employed?</label>
+                        <select value={newCandidate.isEmployed} onChange={(e) => setNewCandidate({...newCandidate, isEmployed: e.target.value})} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200">
+                           <option>No</option><option>Yes</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">District *</label>
+                        <input type="text" value={newCandidate.district} onChange={(e) => setNewCandidate({...newCandidate, district: e.target.value})} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200" />
+                      </div>
+                      <div className="md:col-span-4 flex justify-end gap-3 mt-4 border-t border-slate-100 pt-4">
+                         <button type="button" onClick={() => setShowCandidateForm(false)} className="px-4 py-2 text-sm text-slate-500 hover:text-slate-800">Cancel</button>
+                         <button type="submit" className="px-8 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold shadow-lg hover:bg-slate-800 transition-all">Save Candidate</button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+
+                <div className="overflow-x-auto overflow-y-auto max-h-[500px]">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 border-b border-slate-100 sticky top-0 z-10">
+                      <tr>
+                        <th className="text-left p-3 text-[10px] font-bold text-slate-400 uppercase">Sl. No.</th>
+                        <th className="text-left p-3 text-[10px] font-bold text-slate-400 uppercase">Student / Reg. Month</th>
+                        <th className="text-left p-3 text-[10px] font-bold text-slate-400 uppercase">Parent/WhatsApp</th>
+                        <th className="text-left p-3 text-[10px] font-bold text-slate-400 uppercase">Course/Batch</th>
+                        <th className="text-left p-3 text-[10px] font-bold text-slate-400 uppercase">Category/Gender</th>
+                        <th className="text-left p-3 text-[10px] font-bold text-slate-400 uppercase">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {isFetchingStudents ? (
+                        <tr><td colSpan="5" className="p-8 text-center text-slate-400 italic">Fetching candidate list...</td></tr>
+                      ) : students.length === 0 ? (
+                        <tr><td colSpan="5" className="p-16 text-center text-slate-400 font-bold italic">No candidates found in {user.state}</td></tr>
+                      ) : (
+                        students
+                          .filter(s => s.name?.toLowerCase().includes(candidateSearch.toLowerCase()) || s.courseName?.toLowerCase().includes(candidateSearch.toLowerCase()))
+                          .map((student, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                              <td className="p-3 text-[10px] font-bold text-slate-400">#{idx + 1}</td>
+                              <td className="p-3">
+                                <p className="font-bold text-slate-800">{student.name}</p>
+                                <div className="flex items-center gap-2">
+                                  <p className="text-[10px] text-slate-400 font-black uppercase tracking-tighter">Reg: {student.nielitRegNo || 'PENDING'}</p>
+                                  <span className="text-[9px] bg-slate-100 px-1 rounded text-slate-500 font-bold">{student.regMonth}</span>
+                                </div>
+                              </td>
+                              <td className="p-3"><p className="text-xs text-slate-600 font-medium">{student.fatherName}</p><p className="text-[10px] text-emerald-600 font-bold">{student.whatsappNo || 'No No.'}</p></td>
+                              <td className="p-3"><p className="text-xs font-bold text-slate-700 truncate max-w-[150px]">{student.courseName}</p><p className="text-[10px] text-slate-500 font-medium">{student.batchNo}</p></td>
+                              <td className="p-3"><div className="flex gap-1"><span className="text-[9px] font-black px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded uppercase">{student.category}</span><span className="text-[9px] font-black px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded uppercase">{student.gender}</span></div></td>
+                              <td className="p-3"><span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-[9px] font-black uppercase tracking-tighter border border-emerald-200">Enrolled</span></td>
+                            </tr>
+                          ))
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </div>
-            )}
-          </div>
-        )
-      )}
 
+              {submissions.length > 0 && (
+                <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+                  <h3 className="font-semibold text-slate-700 mb-4">Submission History</h3>
+                  <div className="space-y-4">
+                    {submissions.map(sub => (
+                      <div key={sub.id} className="p-4 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
+                         <div className="flex items-center gap-4">
+                           <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                           <div>
+                             <p className="font-bold text-slate-800 text-sm">{sub.month} Report</p>
+                             <p className="text-[10px] text-slate-400 uppercase font-bold tracking-tight">Sync ID: {sub.id.slice(0,8)}</p>
+                           </div>
+                         </div>
+                         <div className="flex items-center gap-12">
+                            <div className="text-right">
+                              <p className="text-xs font-bold text-slate-600 tracking-tight">{sub.studentFileName}</p>
+                              <p className="text-[10px] text-slate-400">Excel Data Sync</p>
+                            </div>
+                            <span className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-lg text-[9px] font-black uppercase tracking-tighter border border-emerald-200">{sub.status || 'Verified'}</span>
+                         </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        )}
 
         {/* REPORTS TAB (Protected) */}
         {activeTab === 'reports' && (
           !user ? (
-             <div className="bg-white rounded-xl border border-slate-200 p-12 text-center shadow-sm">
+            <div className="bg-white rounded-xl border border-slate-200 p-12 text-center shadow-sm">
               <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">🔒</div>
-              <h3 className="text-xl font-bold text-slate-800 mb-2">Administrative Access Restricted</h3>
-              <p className="text-slate-500 mb-6">You must be logged in as PI or Super Admin to view project reports.</p>
+              <h3 className="text-xl font-bold text-slate-800 mb-2">Restricted Area</h3>
+              <p className="text-slate-500 mb-6">Administrative credentials required to view project reports.</p>
             </div>
           ) : (
             <div className="space-y-6">
-
-            <div className="grid md:grid-cols-3 gap-4">
-              <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
-                <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center mb-3">
-                  <span className="text-blue-600 text-xl">📊</span>
-                </div>
-                <h3 className="font-semibold text-slate-700 mb-1">Monthly Progress Report</h3>
-                <p className="text-sm text-slate-500 mb-3">Consolidated report for MeitY submission</p>
-                <button className="text-sm text-blue-600 font-medium hover:text-blue-700">Generate →</button>
-              </div>
-              <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
-                <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center mb-3">
-                  <span className="text-emerald-600 text-xl">💰</span>
-                </div>
-                <h3 className="font-semibold text-slate-700 mb-1">Utilization Certificate</h3>
-                <p className="text-sm text-slate-500 mb-3">Quarterly UC for fund utilization</p>
-                <button className="text-sm text-blue-600 font-medium hover:text-blue-700">Generate →</button>
-              </div>
-              <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
-                <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center mb-3">
-                  <span className="text-purple-600 text-xl">📈</span>
-                </div>
-                <h3 className="font-semibold text-slate-700 mb-1">KPI Dashboard Export</h3>
-                <p className="text-sm text-slate-500 mb-3">Export all KPIs for PRSG review</p>
-                <button className="text-sm text-blue-600 font-medium hover:text-blue-700">Export →</button>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
-              <h3 className="font-semibold text-slate-700 mb-4">Report Schedule</h3>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between p-3 border border-slate-100 rounded-lg">
-                  <div>
-                    <span className="font-medium text-slate-700">Monthly Report - March 2026</span>
-                    <span className="text-sm text-slate-500 ml-3">Due: April 5, 2026</span>
+              <div className="grid md:grid-cols-3 gap-4">
+                {[
+                  { title: 'Monthly Progress Report', icon: '📊', color: 'blue', desc: 'MeitY consolidated report' },
+                  { title: 'Utilization Certificate', icon: '💰', color: 'emerald', desc: 'Quarterly financial report' },
+                  { title: 'KPI Dashboard Export', icon: '📈', color: 'purple', desc: 'PRSG review export' }
+                ].map((item, i) => (
+                  <div key={i} className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
+                    <div className={`w-10 h-10 bg-${item.color}-100 rounded-lg flex items-center justify-center mb-3`}>
+                      <span className={`text-${item.color}-600 text-xl`}>{item.icon}</span>
+                    </div>
+                    <h3 className="font-semibold text-slate-700 mb-1">{item.title}</h3>
+                    <p className="text-sm text-slate-500 mb-3">{item.desc}</p>
+                    <button className="text-sm text-blue-600 font-medium hover:text-blue-700">Generate →</button>
                   </div>
-                  <span className="px-2 py-1 bg-amber-100 text-amber-700 rounded text-xs font-medium">Pending</span>
-                </div>
-                <div className="flex items-center justify-between p-3 border border-slate-100 rounded-lg">
-                  <div>
-                    <span className="font-medium text-slate-700">Quarterly UC - Q4 FY25</span>
-                    <span className="text-sm text-slate-500 ml-3">Due: April 15, 2026</span>
-                  </div>
-                  <span className="px-2 py-1 bg-amber-100 text-amber-700 rounded text-xs font-medium">Pending</span>
-                </div>
-                <div className="flex items-center justify-between p-3 border border-slate-100 rounded-lg">
-                  <div>
-                    <span className="font-medium text-slate-700">Monthly Report - February 2026</span>
-                    <span className="text-sm text-slate-500 ml-3">Submitted: March 4, 2026</span>
-                  </div>
-                  <span className="px-2 py-1 bg-emerald-100 text-emerald-700 rounded text-xs font-medium">Submitted</span>
+                ))}
+              </div>
+              <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+                <h3 className="font-semibold text-slate-700 mb-4">Report Schedule</h3>
+                <div className="space-y-3">
+                  {[
+                    { label: 'Monthly Report - March 2026', date: 'Due: April 5, 2026', status: 'Pending', color: 'amber' },
+                    { label: 'Quarterly UC - Q4 FY25', date: 'Due: April 15, 2026', status: 'Pending', color: 'amber' },
+                    { label: 'Monthly Report - February 2026', date: 'Submitted: March 4, 2026', status: 'Submitted', color: 'emerald' }
+                  ].map((row, i) => (
+                    <div key={i} className="flex items-center justify-between p-3 border border-slate-100 rounded-lg">
+                      <div className="flex gap-4 items-baseline">
+                        <span className="font-medium text-slate-700 text-sm">{row.label}</span>
+                        <span className="text-[10px] text-slate-400 font-bold uppercase">{row.date}</span>
+                      </div>
+                      <span className={`px-2 py-0.5 bg-${row.color}-100 text-${row.color}-700 rounded text-[9px] font-black uppercase tracking-tighter`}>{row.status}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
-          </div>
-        )
-      )}
+          )
+        )}
     </div>
 
           {/* RIGHT: AUTH PANEL (25%) */}
